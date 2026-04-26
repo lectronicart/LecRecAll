@@ -81,7 +81,7 @@ router.get('/', (req: Request, res: Response) => {
     const params: any[] = [];
 
     if (search) {
-      query += ` AND c.id IN (SELECT rowid FROM cards_fts WHERE cards_fts MATCH ?)`;
+      query += ` AND c.rowid IN (SELECT rowid FROM cards_fts WHERE cards_fts MATCH ?)`;
       params.push(search);
     }
 
@@ -115,7 +115,7 @@ router.get('/', (req: Request, res: Response) => {
           LEFT JOIN card_tags ct ON c.id = ct.card_id
           LEFT JOIN tags t ON ct.tag_id = t.id
           WHERE c.is_deleted = 0
-          ${search ? 'AND c.id IN (SELECT rowid FROM cards_fts WHERE cards_fts MATCH ?)' : ''}
+          ${search ? 'AND c.rowid IN (SELECT rowid FROM cards_fts WHERE cards_fts MATCH ?)' : ''}
           ${tag ? 'AND t.name = ?' : ''}
           ${source_type ? 'AND c.source_type = ?' : ''}
           GROUP BY c.id
@@ -247,6 +247,116 @@ router.delete('/:id', (req: Request, res: Response) => {
     res.status(204).send();
   } catch (error: any) {
     console.error('Error deleting card:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/cards/:id/quizzes — Get quizzes for a card
+router.get('/:id/quizzes', (req: Request, res: Response) => {
+  try {
+    const db = getDatabase();
+    const quizzes = db.prepare('SELECT * FROM quizzes WHERE card_id = ? ORDER BY created_at DESC').all(req.params.id) as any[];
+    
+    for (const quiz of quizzes) {
+      const questions = db.prepare('SELECT * FROM quiz_questions WHERE quiz_id = ?').all(quiz.id) as any[];
+      quiz.questions = questions.map(q => ({
+        ...q,
+        options: q.options ? JSON.parse(q.options) : null
+      }));
+    }
+    
+    res.json(quizzes);
+  } catch (error: any) {
+    console.error('Error getting quizzes:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/cards/:id/quiz — Generate a new quiz for a card
+router.post('/:id/quiz', async (req: Request, res: Response) => {
+  try {
+    const db = getDatabase();
+    const card = db.prepare('SELECT id, title, content_markdown FROM cards WHERE id = ?').get(req.params.id) as any;
+    
+    if (!card) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
+    
+    // Import here to avoid circular dependencies if any
+    const { generateQuizQuestions } = await import('../services/ai.js');
+    
+    const questionsData = await generateQuizQuestions(card.content_markdown || card.title, card.title, 5);
+    
+    if (!questionsData || questionsData.length === 0) {
+      return res.status(500).json({ error: 'Failed to generate quiz questions' });
+    }
+    
+    const quizId = uuidv4();
+    db.prepare('INSERT INTO quizzes (id, card_id, title) VALUES (?, ?, ?)').run(quizId, card.id, `Quiz: ${card.title}`);
+    
+    const insertQuestion = db.prepare(`
+      INSERT INTO quiz_questions (id, quiz_id, question_type, question, options, correct_answer, explanation)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    const insertTransaction = db.transaction((questions: any[]) => {
+      for (const q of questions) {
+        insertQuestion.run(
+          uuidv4(),
+          quizId,
+          q.question_type || 'multiple_choice',
+          q.question,
+          q.options ? JSON.stringify(q.options) : null,
+          q.correct_answer,
+          q.explanation || ''
+        );
+      }
+    });
+    
+    insertTransaction(questionsData);
+    
+    const quiz = db.prepare('SELECT * FROM quizzes WHERE id = ?').get(quizId) as any;
+    const questions = db.prepare('SELECT * FROM quiz_questions WHERE quiz_id = ?').all(quizId) as any[];
+    quiz.questions = questions.map(q => ({
+      ...q,
+      options: q.options ? JSON.parse(q.options) : null
+    }));
+    
+    res.status(201).json(quiz);
+  } catch (error: any) {
+    console.error('Error generating quiz:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/cards/:id/notes — Add a note to a card
+router.post('/:id/notes', (req: Request, res: Response) => {
+  try {
+    const { content } = req.body;
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'content is required' });
+    }
+    const db = getDatabase();
+    const card = db.prepare('SELECT id FROM cards WHERE id = ? AND is_deleted = 0').get(req.params.id);
+    if (!card) return res.status(404).json({ error: 'Card not found' });
+
+    const position = (db.prepare('SELECT COUNT(*) as c FROM notes WHERE card_id = ?').get(req.params.id) as any).c;
+    const noteId = uuidv4();
+    db.prepare('INSERT INTO notes (id, card_id, content, position) VALUES (?, ?, ?, ?)').run(noteId, req.params.id, content.trim(), position);
+    const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(noteId);
+    res.status(201).json(note);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/cards/:id/notes/:noteId — Delete a note
+router.delete('/:id/notes/:noteId', (req: Request, res: Response) => {
+  try {
+    const db = getDatabase();
+    db.prepare('DELETE FROM notes WHERE id = ? AND card_id = ?').run(req.params.noteId, req.params.id);
+    res.status(204).send();
+  } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });

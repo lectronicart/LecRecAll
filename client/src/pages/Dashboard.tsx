@@ -15,6 +15,7 @@ export default function Dashboard({ onAddContent }: DashboardProps) {
   const [cards, setCards] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<'newest' | 'oldest' | 'title' | 'most_connected'>('newest');
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -24,7 +25,7 @@ export default function Dashboard({ onAddContent }: DashboardProps) {
   const loadCards = async () => {
     setLoading(true);
     try {
-      const params: Record<string, string> = {};
+      const params: Record<string, string> = { sort };
       if (search) params.search = search;
       if (tag) params.tag = tag;
       if (sourceType) params.source_type = sourceType;
@@ -36,7 +37,7 @@ export default function Dashboard({ onAddContent }: DashboardProps) {
     setLoading(false);
   };
 
-  useEffect(() => { loadCards(); }, [tag, sourceType]);
+  useEffect(() => { loadCards(); }, [tag, sourceType, sort]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,8 +65,17 @@ export default function Dashboard({ onAddContent }: DashboardProps) {
         </form>
 
         <div className="header-actions">
-          <button className="btn btn-ghost btn-sm" disabled>Updated ↓</button>
-          <button className="btn btn-ghost btn-sm" disabled>Grid ⊞</button>
+          <select
+            value={sort}
+            onChange={e => setSort(e.target.value as typeof sort)}
+            className="btn btn-ghost btn-sm"
+            style={{ cursor: 'pointer', paddingRight: 8 }}
+          >
+            <option value="newest">Newest ↓</option>
+            <option value="oldest">Oldest ↑</option>
+            <option value="title">Title A–Z</option>
+            <option value="most_connected">Most Connected</option>
+          </select>
           {onAddContent && (
             <button className="btn btn-primary" onClick={onAddContent}>
               + Add <span style={{ opacity: 0.7, fontSize: '0.75rem', marginLeft: '4px', border: '1px solid currentColor', borderRadius: '4px', padding: '0 4px' }}>⌘K</span>

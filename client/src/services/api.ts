@@ -40,6 +40,16 @@ export const api = {
     messages: (sessionId: string) => request(`/chat/sessions/${sessionId}/messages`),
     models: () => request('/chat/models'),
   },
+  quizzes: {
+    list: (cardId: string) => request(`/cards/${cardId}/quizzes`),
+    generate: (cardId: string) => request(`/cards/${cardId}/quiz`, { method: 'POST' }),
+  },
+  notes: {
+    create: (cardId: string, content: string) =>
+      request(`/cards/${cardId}/notes`, { method: 'POST', body: JSON.stringify({ content }) }),
+    delete: (cardId: string, noteId: string) =>
+      request(`/cards/${cardId}/notes/${noteId}`, { method: 'DELETE' }),
+  },
   graph: () => request('/graph'),
   settings: {
     get: () => request('/chat/settings'),

@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { api } from '../services/api';
 import ListenMode from '../components/ListenMode';
 
@@ -14,18 +16,52 @@ export default function CardDetail() {
   const [card, setCard] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'summary' | 'content' | 'chat'>('summary');
+
+  // Chat state
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
 
+  // Notes state
+  const [notes, setNotes] = useState<any[]>([]);
+  const [noteInput, setNoteInput] = useState('');
+  const [noteLoading, setNoteLoading] = useState(false);
+  const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
+
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    api.cards.get(id).then(setCard).catch(() => navigate('/')).finally(() => setLoading(false));
+    api.cards.get(id)
+      .then(c => { setCard(c); setNotes(c.notes || []); })
+      .catch(() => navigate('/'))
+      .finally(() => setLoading(false));
   }, [id]);
 
-  const sendChat = async (e: React.FormEvent) => {
+  const addNote = async () => {
+    if (!noteInput.trim() || noteLoading || !id) return;
+    setNoteLoading(true);
+    try {
+      const note = await api.notes.create(id, noteInput.trim());
+      setNotes(prev => [...prev, note]);
+      setNoteInput('');
+    } catch (err) {
+      console.error('Failed to add note:', err);
+    }
+    setNoteLoading(false);
+  };
+
+  const deleteNote = async (noteId: string) => {
+    if (!id) return;
+    try {
+      await api.notes.delete(id, noteId);
+      setNotes(prev => prev.filter(n => n.id !== noteId));
+    } catch (err) {
+      console.error('Failed to delete note:', err);
+    }
+  };
+
+  const sendChat = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!chatInput.trim() || chatLoading) return;
     const msg = chatInput.trim();
@@ -57,7 +93,11 @@ export default function CardDetail() {
           {card.author && <span>by {card.author}</span>}
           <span>{new Date(card.created_at).toLocaleDateString()}</span>
           {card.word_count > 0 && <span>{card.word_count.toLocaleString()} words</span>}
-          {card.url && <a href={card.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: '0.85rem' }}>Open original ↗</a>}
+          {card.url && (
+            <a href={card.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', textDecoration: 'none', fontSize: '0.85rem' }}>
+              Open original ↗
+            </a>
+          )}
         </div>
         <div className="card-tags" style={{ marginTop: 10 }}>
           {(card.tags || []).map((t: any) => <span key={t.id} className="tag-pill">{t.name}</span>)}
@@ -69,22 +109,15 @@ export default function CardDetail() {
           <button className={activeTab === 'summary' ? 'active' : ''} onClick={() => setActiveTab('summary')}>Notebook</button>
           <button className={activeTab === 'chat' ? 'active' : ''} onClick={() => setActiveTab('chat')}>Chat</button>
           <button className={activeTab === 'content' ? 'active' : ''} onClick={() => setActiveTab('content')}>Reader</button>
-          <button disabled style={{ opacity: 0.5 }}>Quiz</button>
-          <button disabled style={{ opacity: 0.5 }}>Connections</button>
-          <button disabled style={{ opacity: 0.5 }}>Graph</button>
-        </div>
-        <div>
-          <button className="btn btn-ghost btn-sm" disabled style={{ padding: '4px 10px', fontSize: '0.75rem', border: '1px solid var(--border)' }}>
-            Split ◫
-          </button>
         </div>
       </div>
 
       <div className="card-detail-body">
         <div className="card-detail-content">
+
+          {/* ── Notebook tab ── */}
           {activeTab === 'summary' && (
             <>
-              {/* Listen Mode: TTS player for summary + content */}
               {card.summary && (
                 <ListenMode
                   text={card.summary + (card.key_takeaways?.length ? '\n\nKey Takeaways:\n' + card.key_takeaways.join('\n') : '')}
@@ -99,7 +132,9 @@ export default function CardDetail() {
               ) : (
                 <div className="summary-section">
                   <div className="status-badge processing" style={{ marginBottom: 12 }}>⏳ AI is processing this content...</div>
-                  <p className="summary-text" style={{ color: 'var(--text-muted)' }}>Summary will appear here once processing completes. Refresh to check.</p>
+                  <p className="summary-text" style={{ color: 'var(--text-muted)' }}>
+                    Summary will appear here once processing completes. Refresh to check.
+                  </p>
                 </div>
               )}
 
@@ -117,24 +152,79 @@ export default function CardDetail() {
                   <h2>Key Concepts</h2>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {card.concepts.map((c: any) => (
-                      <div key={c.id} className="tag-pill" title={c.description} style={{ background: 'var(--bg-elevated)', color: 'var(--accent-cyan)', borderColor: 'var(--accent-cyan)' }}>
+                      <div key={c.id} className="tag-pill" title={c.description}
+                        style={{ background: 'var(--bg-elevated)', color: 'var(--accent-cyan)', borderColor: 'var(--accent-cyan)' }}>
                         {c.name}
                       </div>
                     ))}
                   </div>
                 </div>
               )}
+
+              {/* Notes */}
+              <div className="summary-section">
+                <h2>My Notes</h2>
+                {notes.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
+                    {notes.map((note: any) => (
+                      <div key={note.id} style={{
+                        padding: '12px 16px', borderRadius: 'var(--radius)',
+                        background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                        display: 'flex', gap: 12, alignItems: 'flex-start',
+                      }}>
+                        <p style={{ flex: 1, margin: 0, fontSize: '0.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                          {note.content}
+                        </p>
+                        <button
+                          onClick={() => deleteNote(note.id)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem', padding: '2px 4px', flexShrink: 0 }}
+                          title="Delete note"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <textarea
+                    ref={noteTextareaRef}
+                    className="form-textarea"
+                    placeholder="Add a note..."
+                    value={noteInput}
+                    onChange={e => setNoteInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) addNote(); }}
+                    rows={3}
+                    style={{ resize: 'vertical', fontSize: '0.9rem' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={addNote}
+                      disabled={noteLoading || !noteInput.trim()}
+                    >
+                      {noteLoading ? 'Saving...' : 'Add Note'}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </>
           )}
 
+          {/* ── Reader tab ── */}
           {activeTab === 'content' && (
             <div className="markdown-content">
-              {(card.content_markdown || card.content_raw || 'No content available').split('\n').map((line: string, i: number) => (
-                <p key={i}>{line}</p>
-              ))}
+              {card.content_markdown || card.content_raw ? (
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {card.content_markdown || card.content_raw}
+                </ReactMarkdown>
+              ) : (
+                <p style={{ color: 'var(--text-muted)' }}>No content available.</p>
+              )}
             </div>
           )}
 
+          {/* ── Chat tab ── */}
           {activeTab === 'chat' && (
             <div className="chat-panel" style={{ height: 'calc(100vh - 280px)' }}>
               <div className="chat-messages">
@@ -151,7 +241,11 @@ export default function CardDetail() {
                 {chatLoading && <div className="chat-message assistant" style={{ opacity: 0.6 }}>Thinking...</div>}
               </div>
               <form className="chat-input-area" onSubmit={sendChat}>
-                <input placeholder={`Ask about "${card.title}"...`} value={chatInput} onChange={e => setChatInput(e.target.value)} />
+                <input
+                  placeholder={`Ask about "${card.title}"...`}
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                />
                 <button type="submit" className="btn btn-primary btn-sm" disabled={chatLoading}>Send</button>
               </form>
             </div>
@@ -177,7 +271,9 @@ export default function CardDetail() {
                 </div>
               ))
             ) : (
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No connections yet. Add more content to build your knowledge graph.</p>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                No connections yet. Add more content to build your knowledge graph.
+              </p>
             )}
           </div>
         </div>
